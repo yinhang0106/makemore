@@ -1,0 +1,6 @@
+# run the following:
+# $ conda env create -f conda_env.yaml
+
+name: makemore
+dependencies:
+  - python=3.10 # Replace with your desired Python version
