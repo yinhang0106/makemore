@@ -70,7 +70,7 @@ How many samples do we have?
 len(words)  # 32033
 ```
 
-Let's see how we transformed the dataset to features and labels.
+Let's see how we transformed the dataset into features and labels.
 
 ```python
 block_size = 3  # using contiguous 3 characters to predict the next one
@@ -165,7 +165,7 @@ tensor([[ 1.5674, -0.2373],
 
 Let's embed "..e" manually:
 
-1. `..e` is `[0, 0, 5]` in `X` depending on the mapping `stoi`.
+1. `..e` is `[0, 0, 5]` in `X` depending on the `stoi` map.
 2. `[0, 0, 5]` to index means `['the first row', 'the first row', 'the 6th row']` in `C`, so we get `[[ 1.5674, -0.2373], [ 1.5674, -0.2373], [ 0.4713,  0.7868]]`.
 
 Now check the result:
@@ -200,7 +200,7 @@ emb.view(32, -1) == torch.cat(torch.unbind(emb, 1), dim=1)
 # tensor([[True, True, True, True, True, True], ...]) --> all True means equivalent
 ```
 
-The `view` is the most concise and efficient. The feasibility of `view` lies in the Pytorch's internal storage mechanism for tensors. For details, see [PyTorch internals](http://blog.ezyang.com/2019/05/pytorch-internals/).
+The `view` is the most concise and efficient. The feasibility of the `view` lies in the Pytorch's internal storage mechanism for tensors. For details, see [PyTorch internals](http://blog.ezyang.com/2019/05/pytorch-internals/).
 
 ## Build MLP
 
@@ -272,7 +272,7 @@ loss = F.cross_entropy(logits, Y)
 
 ## Training
 
-Like before, we need `embedding` and `forward pass` to iterate the training process.
+Like before, we need the `embedding` and the `forward pass` to iterate the training process.
 
 ```python
 # embedding
@@ -317,7 +317,7 @@ for _ in range(5000):
         p.data -= 1.0 * p.grad
 ```
 
-The loss is decreasing, means the model is learning. Yay~!
+The loss is decreasing, meaning the model is learning. Yay~!
 
 ```text
 19.505229949951172
@@ -383,7 +383,7 @@ for _ in range(5000):
         p.data -= 0.1 * p.grad
 ```
 
-Training process becomes much much faster, but we need to evaluate the loss on the whole dataset, not just the mini-batch.
+The training process becomes much faster, but we need to evaluate the loss on the whole dataset, not just the mini-batch.
 
 ```python
 # embedding
@@ -400,9 +400,8 @@ The loss is decreasing from `2.311` to `2.288`, and the training process is much
 
 ## Learning Rate
 
-The second optimization is to use `learning rate` to control the update step.
+The second optimization is to use the `learning rate` to control the update step.
 
-In the previous training process, we choose learning rate `1.0` and `0.1` by experience or guess. This is not a good practice, in the other words, it's not a optimal (or ideal) learning rate.
+In the previous training process, we choose learning rates `1.0` and `0.1` by experience or guess. This is not a good practice, in other words, it's not an optimal (or ideal) learning rate.
 
 How can we deal with it?
-
