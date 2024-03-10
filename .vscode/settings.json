@@ -1,6 +1,8 @@
 {
     "cSpell.words": [
         "andrej",
+        "arange",
+        "backpropagation",
         "bigrams",
         "chstr",
         "cmap",
@@ -9,9 +11,16 @@
         "itos",
         "keepdim",
         "likehood",
+        "logits",
         "logprob",
+        "matplotlib",
+        "minibatch",
         "multinomial",
+        "probs",
+        "pyplot",
+        "randint",
         "randn",
+        "splitlines",
         "stoi"
     ]
 }

@@ -75,6 +75,12 @@ lucianno
 
 Have fun!
 
+### Reading List
+
+- [Pytorch Internals](http://blog.ezyang.com/2019/05/pytorch-internals/)
+- [BROADCASTING SEMANTICS](https://pytorch.org/docs/stable/notes/broadcasting.html)
+
+
 ### License
 
 MIT
