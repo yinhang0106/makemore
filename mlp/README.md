@@ -15,6 +15,7 @@ MLP, following [Bengio et al. 2003](https://www.jmlr.org/papers/volume3/bengio03
 - [*Dataset Split*](#dataset-split)
 - [*Visualization*](#visualization)
 - [*High-Dimensional Space*](#high-dimensional-space)
+- [*Sampling*](#sampling)
 - [*Summary*](#summary)
 - [*Appendix: Broadcasting*](#appendix-broadcasting)
 
@@ -580,7 +581,7 @@ Although we cannot visualize higher-dimensional spaces, we imagine when the dime
 
 ## High-Dimensional Space
 
-The following is a complete code of MLP with 100-dimensional embedding. 
+The following is a complete code of MLP with 10-dimensional embedding. 
 
 ```python
 import torch
@@ -623,12 +624,12 @@ Xtrain, Ytrain = build_dataset(words[:n1])
 Xdev, Ydev = build_dataset(words[n1:n2])
 Xtest, Ytest = build_dataset(words[n2:])
 
-# Let's embed the char to 100D space
+# Let's embed the char to 10D space
 # for reproducibility
 g = torch.Generator().manual_seed(2147483647)   # consistent with Andrej's settings 
 
 # setting parameters
-n_input = 300             # 3 characters * 100D embedding
+n_input = 300             # 3 characters * 10D embedding
 n_hidden = 200
 n_output = 27
 
@@ -689,6 +690,53 @@ the test's loss 2.2619
 
 As expected, the model achieves the best performance so far. The loss decreases from `2.288` ( the best result from the 2D ) to `2.2619`.
 
+## Sampling
+
+Use our trained model to generate new names.
+
+```python
+# sample from the model
+g = torch.Generator().manual_seed(2147483647 + 10)
+
+for _ in range(20):
+    outs = []
+    context = [0] * block_size  # block_size = 3
+    while True:
+        emb = C[torch.tensor([context])]
+        h = torch.tanh(emb.view(1, n_input) @ W1 + b1)
+        logits = h @ W2 + b2
+        probs = F.softmax(logits, 1)
+        next_char = torch.multinomial(probs, 1, generator=g).item()
+        context = context[1:] + [next_char]
+        outs.append(next_char)
+        if next_char == 0: break
+    print(''.join([itos[i] for i in outs]))
+```
+```text
+arra.
+amyah.
+seen.
+nah.
+yas.
+azavangendrnee.
+azelynnelin.
+sappren.
+adee.
+earanaraelynn.
+hok.
+ann.
+sadhvon.
+hariel.
+janee.
+jayson.
+tanianna.
+kard.
+rayshue.
+elsyk.
+```
+
+Much better than the Bigram model's results. 
+
 ## Summary
 
 Following Andrej Karpathy's tutorial, we achieved the following results:
@@ -698,7 +746,7 @@ Following Andrej Karpathy's tutorial, we achieved the following results:
 | basic          | 2.311    |
 | mini-batch     | 2.288    |
 | dataset split  | 2.324    |
-| 100d embedding | 2.262    |
+| 10d embedding  | 2.262    |
 |                |          |
 
 Highly recommended to watch the [bilibili](https://www.bilibili.com/video/BV1pZ42117RR?vd_source=1441b5bd793a9efda4bf62153bcca888).
