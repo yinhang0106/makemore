@@ -12,6 +12,3 @@
 
 For details, read [He et al. 2015](https://doi.org/10.48550/arXiv.1502.01852).
 
-
-
-
