@@ -12,6 +12,11 @@ MLP, following [Bengio et al. 2003](https://www.jmlr.org/papers/volume3/bengio03
 - [*Training*](#training)
 - [*Mini-Batch*](#mini-batch)
 - [*Learning Rate*](#learning-rate)
+- [*Dataset Split*](#dataset-split)
+- [*Visualization*](#visualization)
+- [*High-Dimensional Space*](#high-dimensional-space)
+- [*Summary*](#summary)
+- [*Appendix: Broadcasting*](#appendix-broadcasting)
 
 ## Usage
 
@@ -128,7 +133,7 @@ emb = C[X]
 emb.shape   # torch.Size([228146, 3, 2])
 ```
 
-How `emb = C[X]` work? It's a kind of indexing. When indexing `C` with `X`, we get a 3D tensor. **The first dimension is the same as `X`, and the last two dimensions are the same as `C`.**
+How does `emb = C[X]` work? It's a kind of indexing. When indexing `C` with `X`, we get a 3D tensor. **The first dimension is the same as `X`, and the last two dimensions are the same as `C`.**
 
 For example. The embedding matrix `C` is below:
 
@@ -163,7 +168,7 @@ tensor([[ 1.5674, -0.2373],
         [ 0.2569,  0.2130]])
 ```
 
-Let's embed "..e" manually:
+Let's embed `"..e"` manually:
 
 1. `..e` is `[0, 0, 5]` in `X` depending on the `stoi` map.
 2. `[0, 0, 5]` to index means `['the first row', 'the first row', 'the 6th row']` in `C`, so we get `[[ 1.5674, -0.2373], [ 1.5674, -0.2373], [ 0.4713,  0.7868]]`.
@@ -405,3 +410,337 @@ The second optimization is to use the `learning rate` to control the update step
 In the previous training process, we choose learning rates `1.0` and `0.1` by experience or guess. This is not a good practice, in other words, it's not an optimal (or ideal) learning rate.
 
 How can we deal with it?
+
+First, visualize the loss with different learning rates.
+
+```python
+# generate learning rates from 0.001 to 1.0
+lre = torch.linspace(-3., 0., 1000)
+lrs = 10**lre
+
+# trace the lr and loss info
+lri = []
+lossi = []
+
+# mini-batch training
+for i in range(1000):
+
+    # mini-batch construction
+    ix = torch.randint(0, X.shape[0], (32,))    # 32 is the batch size
+
+    # embedding
+    emb = C[X[ix]]  # randomly select 32 samples
+
+    # forward pass
+    h = torch.tanh(emb.view(-1, 6) @ W1 + b1)
+    logits = h @ W2 + b2
+    loss = F.cross_entropy(logits, Y[ix])   # use the related labels
+    
+    # backward pass
+    for p in parameters:
+        p.grad = None
+    loss.backward()
+
+    # update
+    lr = lrs[i]
+    for p in parameters:
+        p.data -= lr * p.grad
+
+    # trace stats
+    lri.append(lr)
+    lossi.append(loss.item())
+
+# visualize
+plt.plot(lri, lossi)
+```
+
+The loss is decreasing with the learning rate increasing, but it's not a linear relationship. The loss is decreasing rapidly at the beginning, and then the decreasing speed is slowing down. The optimal learning rate is around `0.1`.
+
+![Learning Rate](../pictures/lr-loss.png)
+
+We can use this learning rate to train the model.
+
+## Dataset Split
+
+In practice, researchers split the dataset into different parts, aiming to avoid overfitting. Generally, we use the `training set` to train the model and the `validation/dev set` to evaluate the hyperparameters. Finally, we test the model on the `test set`.
+
+The proportion of `training`, `dev/validation`, and `test` splits is usually `80%`, `10%`, and `10%`, respectively.
+
+```python
+# rebuild the dataset
+def build_dataset(words):
+    block_size = 3  # using 3 contiguous characters to predict the next one
+    X, Y = [], []
+    for w in words:
+        context = [0] * block_size
+        for ch in w + ".":
+            ix = stoi[ch]
+            X.append(context)
+            Y.append(ix)
+            context = context[1:] + [ix]    # crop and append
+    return torch.tensor(X), torch.tensor(Y)
+
+# split the dataset, randomly
+import random
+
+random.seed(2147483647)
+random.shuffle(words)
+
+n1 = int(0.8 * len(words))
+n2 = int(0.9 * len(words))
+
+Xtrain, Ytrain = build_dataset(words[:n1])
+Xdev, Ydev = build_dataset(words[n1:n2])
+Xtest, Ytest = build_dataset(words[n2:])
+```
+
+Now rewrite the training process with only the `training set`, and use the `validation set` to evaluate.
+
+```python
+# mini-batch training
+for i in range(10000):
+
+    # mini-batch construction
+    ix = torch.randint(0, Xtrain.shape[0], (32,))    # 32 is the batch size
+
+    # embedding
+    emb = C[Xtrain[ix]]  # randomly select 32 samples
+
+    # forward pass
+    h = torch.tanh(emb.view(-1, 6) @ W1 + b1)
+    logits = h @ W2 + b2
+    loss = F.cross_entropy(logits, Ytrain[ix])   # use the related labels
+    
+    # backward pass
+    for p in parameters:
+        p.grad = None
+    loss.backward()
+
+    # update
+    lr = 0.1
+    for p in parameters:
+        p.data -= lr * p.grad
+```
+
+After about 100,000 iterations, the loss in the `training set` is `2.324`, compared to `2.348` in the `validation set` and `2.334` in the `test set`. The model is not overfitting.
+
+```python
+# dev/validation valuation
+emb = C[Xdev]
+h = torch.tanh(emb.view(-1, 6) @ W1 + b1)
+logits = h @ W2 + b2
+loss_dev = F.cross_entropy(logits, Ydev)
+print(loss_dev.item())
+
+# test valuation
+emb = C[Xtest]
+h = torch.tanh(emb.view(-1, 6) @ W1 + b1)
+logits = h @ W2 + b2
+loss_test = F.cross_entropy(logits, Ytest)
+print(loss_test.item())
+```
+
+## Visualization
+
+Why do we embed the characters into a 2D space? The answer is visualization. Let's see this 2D embedding space.
+
+```python
+# visualize dimensions 0 and 1 of the embedding matrix C for all characters
+plt.figure(figsize=(8,8))
+plt.scatter(C[:,0].data, C[:,1].data, s=200)
+for i in range(C.shape[0]):
+    plt.text(C[i,0].item(), C[i,1].item(), itos[i], ha="center", va="center", color='white')
+plt.grid('grid')
+```
+
+![2D Embedding Space](../pictures/embedding-2d.png)
+
+This is how characters are embedded into a 2D space. You can see that the vowels `a`, `e`, `u`, `i`, and `o` are close to each other, which means they can replace each other in the names by higher probability. It is amazing!
+
+Let's map characters into a 3D space.
+
+```python
+# mapping to 3D space
+C = torch.randn((27, 3))
+n_input = 3 * 3     # 3 characters * 3D embedding
+
+# 3D visualization
+from mpl_toolkits.mplot3d import Axes3D
+fig = plt.figure()
+ax = fig.add_subplot(projection='3d')
+ax.scatter(C[:,0].data, C[:,1].data, C[:,2].data, s=200)
+for i in range(C.shape[0]):
+    ax.text(C[i,0].item(), C[i,1].item(), C[i,2].item(), itos[i], ha="center", va="center", color='white')
+plt.grid('minor')
+```
+
+![3D Embedding Space](../pictures/embedding-3d.png)
+
+Although we cannot visualize higher-dimensional spaces, we imagine when the dimension increases, the distance between characters will carry more information, and the model will learn better. Let's try it!
+
+## High-Dimensional Space
+
+The following is a complete code of MLP with 100-dimensional embedding. 
+
+```python
+import torch
+import torch.nn.functional as F
+import matplotlib.pyplot as plt
+%matplotlib inline
+
+# read all the words in the file
+words = open("../names.txt").read().splitlines()
+
+# build the vocabulary of characters and mapping to/from integers
+chars = sorted(list(set(''.join(words))))
+stoi = { ch: i + 1 for i, ch in enumerate(chars) }
+stoi["."] = 0
+itos = { i: ch for ch, i in stoi.items() }
+
+# build the dataset
+def build_dataset(words):
+    block_size = 3  # using 3 contiguous characters to predict the next one
+    X, Y = [], []
+    for w in words:
+        context = [0] * block_size
+        for ch in w + ".":
+            ix = stoi[ch]
+            X.append(context)
+            Y.append(ix)
+            context = context[1:] + [ix]    # crop and append
+    return torch.tensor(X), torch.tensor(Y)
+
+# split the dataset, randomly
+import random
+
+random.seed(2147483647)
+random.shuffle(words)
+
+n1 = int(0.8 * len(words))
+n2 = int(0.9 * len(words))
+
+Xtrain, Ytrain = build_dataset(words[:n1])
+Xdev, Ydev = build_dataset(words[n1:n2])
+Xtest, Ytest = build_dataset(words[n2:])
+
+# Let's embed the char to 100D space
+# for reproducibility
+g = torch.Generator().manual_seed(2147483647)   # consistent with Andrej's settings 
+
+# setting parameters
+n_input = 300             # 3 characters * 100D embedding
+n_hidden = 200
+n_output = 27
+
+C = torch.randn((27, 100), requires_grad=True, generator=g)
+W1 = torch.randn((n_input, n_hidden), requires_grad=True, generator=g)
+b1 = torch.randn((n_hidden,), requires_grad=True, generator=g)
+W2 = torch.randn((n_hidden, n_output), requires_grad=True, generator=g)
+b2 = torch.randn((n_output,), requires_grad=True, generator=g)
+
+parameters = [C, W1, b1, W2, b2]        # collect all parameters
+
+# mini-batch training
+for i in range(100000):
+
+    # mini-batch construction
+    ix = torch.randint(0, Xtrain.shape[0], (32,))    # 32 is the batch size
+
+    # embedding
+    emb = C[Xtrain[ix]]  # randomly select 32 samples
+
+    # forward pass
+    h = torch.tanh(emb.view(-1, n_input) @ W1 + b1)
+    logits = h @ W2 + b2
+    loss = F.cross_entropy(logits, Ytrain[ix])   # use the related labels
+    
+    # backward pass
+    for p in parameters:
+        p.grad = None
+    loss.backward()
+
+    # update
+    lr = 0.1
+    for p in parameters:
+        p.data -= lr * p.grad
+
+print(f"the training's loss {loss.item():.4f}")
+
+# dev/validation valuation
+emb = C[Xdev]
+h = torch.tanh(emb.view(-1, n_input) @ W1 + b1)
+logits = h @ W2 + b2
+loss_dev = F.cross_entropy(logits, Ydev)
+print(f"the validation's loss {loss_dev.item():.4f}")
+
+# test valuation
+emb = C[Xtest]
+h = torch.tanh(emb.view(-1, n_input) @ W1 + b1)
+logits = h @ W2 + b2
+loss_test = F.cross_entropy(logits, Ytest)
+print(f"the test's loss {loss_test.item():.4f}")
+```
+
+```text
+the training's loss 2.7563
+the validation's loss 2.2675
+the test's loss 2.2619
+```
+
+As expected, the model achieves the best performance so far. The loss decreases from `2.288` ( the best result from the 2D ) to `2.2619`.
+
+## Summary
+
+Following Andrej Karpathy's tutorial, we achieved the following results:
+
+|   Method       |Loss Value|
+|:---------------|---------:|
+| basic          | 2.311    |
+| mini-batch     | 2.288    |
+| dataset split  | 2.324    |
+| 100d embedding | 2.262    |
+|                |          |
+
+Highly recommended to watch the [bilibili](https://www.bilibili.com/video/BV1pZ42117RR?vd_source=1441b5bd793a9efda4bf62153bcca888).
+
+## Appendix: Broadcasting
+
+As Andrej Karpathy mentioned, be careful with the `broadcasting`!
+
+Two tensors are “broadcastable” if the following rules hold:
+
+- Each tensor has at least one dimension.
+
+- When iterating over the dimension sizes, starting at the trailing dimension, the dimension sizes must either be equal, one of them is 1, or one of them does not exist.
+
+Excellent examples are given in the official document.
+
+```python
+x=torch.empty(5,7,3)
+y=torch.empty(5,7,3)
+# same shapes are always broadcastable (i.e. the above rules always hold)
+
+x=torch.empty((0,))
+y=torch.empty(2,2)
+# x and y are not broadcastable, because x does not have at least 1 dimension
+
+x=torch.empty(5,3,4,1)
+y=torch.empty(  3,1,1)
+# x and y are broadcastable.
+# 1st trailing dimension: both have size 1
+# 2nd trailing dimension: y has size 1
+# 3rd trailing dimension: x size == y size
+# 4th trailing dimension: y dimension doesn't exist
+
+x=torch.empty(5,2,4,1)
+y=torch.empty(  3,1,1)
+# x and y are not broadcastable, because in the 3rd trailing dimension 2 != 3
+```
+
+If two tensors `x`, `y` are “broadcastable”, the resulting tensor size is calculated as follows:
+
+- If the number of dimensions of x and y are not equal, prepend 1 to the dimensions of the tensor with fewer dimensions to make them equal length.
+
+- Then, for each dimension size, the resulting dimension size is the max of the sizes of x and y along that dimension.
+
+For details, see [Broadcasting Semantics](https://pytorch.org/docs/stable/notes/broadcasting.html)
