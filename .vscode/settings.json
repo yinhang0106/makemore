@@ -24,6 +24,7 @@
         "matplotlib",
         "minibatch",
         "multinomial",
+        "nonlinearities",
         "probs",
         "pyplot",
         "randint",

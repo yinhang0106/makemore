@@ -9,6 +9,8 @@
 - [*Basic MLP*](#basic-mlp)
 - [*Initialization*](#initialization)
 - [*Activations*](#activations)
+- [*Batch Normalization*](#batch-normalization)
+- [*Train Deeper*](#train-deeper)
 
 ## Basic MLP
 
@@ -223,8 +225,6 @@ So, this is the beginning of the journey.
 
 ## Initialization
 
-For details, read [He et al. 2015](https://doi.org/10.48550/arXiv.1502.01852).
-
 Now, we focus on the training process.
 
 The first line of the output is strange. The loss is too large. How does it happen?
@@ -420,7 +420,7 @@ plt.imshow(h.abs() > 0.99, cmap="gray", interpolation='nearest')
 
 ![Hot Graph](../pictures/hot-graph.png)
 
-How to fix this? The key is to re-range `hpreact`, which squashes the values closer to zero, before applying `tanh`. To achieve this, we can initialize `W1` and `b1` in a way that makes the pre-activations close to zero.
+How to fix this? The key is to re-range `hpreact` before applying `tanh`. To achieve this, we can initialize `W1` and `b1` in a way that makes the pre-activations close to zero.
 
 ```python
 W1 = torch.randn((n_embd * block_size, n_hidden),   generator=g) * 0.2
@@ -473,10 +473,293 @@ plt.hist(y.view(-1).tolist(), bins=50, density=True);
 
 ```text
 tensor(0.0011) tensor(0.9886)
-tensor(0.0055) tensor(3.1956)   # the multiplication makes dist more spread
+tensor(0.0055) tensor(3.1956)
 ```
 
 ![x-y-hist](../pictures/x-y-hist.png)
 
 The multiplication makes distribution more spread. And so the question is, how do we scale these `w` to preserve this distribution to remain a Gaussian?
+
+```python
+w = torch.randn(10, 200) * 10
+```
+
+![w-hist-10](../pictures/w-hist-10.png)
+
+```python
+w = torch.randn(10, 200) * 0.2
+```
+
+![w-hist-0.2](../pictures/w-hist-0.2.png)
+
+As the multiplier decreases, the distribution becomes more concentrated, and versa vice. In math, the proper multiplier to preserve the distribution Gaussian is `1/sqrt(fin)`, where `fin` is the number of inputs.
+
+```python
+w = torch.randn(10, 200) * (1 / math.sqrt(10))
+# or
+w = torch.randn(10, 200) / 10**0.5
+```
+
+```text
+tensor(0.0017) tensor(1.0022)   # Gaussian (0, 1)
+tensor(0.0006) tensor(1.0007)   # Gaussian (0, 1)
+```
+
+![w-hist-1-sqrt-10](../pictures/w-hist-1-sqrt-10.png)
+
+There is a slight difference in practice. Let's see the `kaiming` initialization in practice. PyTorch already provides the `kaiming_normal_` function to initialize the weights, see [here](https://pytorch.org/docs/stable/nn.init.html#torch.nn.init.kaiming_normal_). The method is described in [Delving Deep into Rectifiers: Surpassing human-level Performance on ImageNet Classification - He, K. et al. (2015)](https://doi.org/10.48550/arXiv.1502.01852). The resulting tensor will have values sampled from $\mathcal{N}(0, std^2)$ where
+
+$$std = \frac{gain}{\sqrt{fan\_mode}}$$
+
+Also known as He initialization.
+
+Pytorch also provides the `calculate_gain` function to calculate the `gain` for different nonlinearities, see [here](https://pytorch.org/docs/stable/nn.init.html#torch.nn.init.calculate_gain). The `calculate_gain` returns the recommended gain value for the given nonlinearity function. The values are as follows:
+
+| nonlinearity          | gain                                      |
+|:----------------------|:-----------------------------------------:|
+| *Linear / Identity*   | 1                                         |
+| *Conv{1,2,3}D*        | 1                                         |
+| *Sigmoid*             | 1                                         |
+| *Tanh*                | $\frac{5}{3}$                             |
+| *ReLU*                | $\sqrt{2}$                                |
+| *Leaky Relu*          | $\sqrt{\frac{2}{1 + negative\_slope^2}}$  |
+| *SELU*                | $\frac{3}{4}$                             |
+|                       |                                           |
+
+Examples:
+
+```python
+>>> torch.nn.init.calculate_gain('leaky_relu', 0.2)
+1.3867504905630728
+>>> torch.nn.init.calculate_gain('tanh')
+1.6666666666666667
+>>> torch.nn.init.calculate_gain('relu')
+1.4142135623730951
+```
+
+> ***"... In practice, when I initialize these neural nets, I basically just normalize my weights by the square root of the fan-in."***
+>
+> *from Andrej Karpathy*
+
+So, the key idea is to ***preserve the distribution Gaussian.***
+
+## Batch Normalization
+
+Next, we will introduce one of those modern innovations, and that is `Batch Normalization`. So batch normalization came out in 2015 from a team at Google, for details, see [Ioffe et al. (2015)](https://doi.org/10.48550/arXiv.1502.03167). It was an impactful paper because ***it made it possible to train very deep neural nets quite reliably***, and it just worked.
+
+> ***Input:***
+>
+> - Values of $x$ over a mini-batch: $\mathcal{B}=\{x_{1...m}\}$
+> - Parameters to be learned: $\gamma, \beta$.
+>
+> ***Output:***
+>
+> - $\{ y_i = BN_{\gamma, \beta}(x_i) \}$
+>
+> ***Algorithm:***
+>
+> $\mu_{\mathcal{B}} \leftarrow \frac{1}{m} \sum_{i=1}^{m} x_i$ ································· ( 1 )
+>
+> $\sigma^2_{\mathcal{B}} \leftarrow \frac{1}{m} \sum_{i=1}^{m} (x_i - \mu_{\mathcal{B}})^2$··············· ( 2 )
+>
+> $\hat{x}_i \leftarrow \frac{x_i - \mu_{\mathcal{B}}}{\sqrt{\sigma^2_{\mathcal{B}} + \epsilon}}$············································ ( 3 )
+>
+> $y_i \leftarrow \gamma \hat{x}_i + \beta \equiv BN_{\gamma, \beta}(x_i)$········· ( 4 )
+>
+
+Apply the above to the `hpreact` like the following:
+
+```python
+# (1), (2) and (3)
+hpreact = (hpreact - hpreact.mean(0, keepdim=True)) / hpreact.std(0, keepdim=True)
+
+# (4) introduce two new parameters to be learned, gamma and beta
+bngain = torch.ones((1, n_hidden))
+bnbias = torch.zeros((1, n_hidden))
+parameters = [C, W1, b1, W2, b2] + [bngain, bnbias]
+
+hpreact = bngain + (hpreact - hpreact.mean(0, keepdim=True)) / hpreact.std(0, keepdim=True) + bnbias
+
+# And batch normalization also makes the b1 unnecessary, so we can remove it
+# the parameters setting becomes
+n_embd = 10     # the dimensionality of the character embedding vectors
+n_hidden = 200  # the number of hidden units
+
+g = torch.Generator().manual_seed(2147483647)   # consistent with Andrej's settings 
+C = torch.randn((vocab_size, n_embd),               generator=g)
+W1 = torch.randn((n_embd * block_size, n_hidden),   generator=g) * ((5/3) / (n_embd * block_size)**0.5)
+W2 = torch.randn((n_hidden, vocab_size),            generator=g) * 0.01
+b2 = torch.randn((vocab_size,),                     generator=g) * 0.0
+
+bngain = torch.ones((1, n_hidden))
+bnbias = torch.zeros((1, n_hidden))
+
+parameters = [C, W1, W2, b2, bngain, bnbias]        # collect all parameters
+print("#parameters in total:", sum(p.numel() for p in parameters))
+for p in parameters:
+    p.requires_grad = True
+```
+
+Before evaluating our model on the validation set, we need to calibrate the batch norm at the end of training.
+
+```python
+# calibrate the batch norm at the end of training
+with torch.no_grad():
+    emb = C[Xtrain]                                   # character embeddings
+    embcat = emb.view(emb.shape[0], -1)               # concatenate the vectors
+    hpreact = embcat @ W1                             # pre-activation
+    # measure the mean/std over the entire training set
+    bnmean = hpreact.mean(0, keepdim=True)
+    bnstd = hpreact.std(0, keepdim=True)
+
+# then, we can evaluate our model on the validation set
+@torch.no_grad()
+def split_loss(split):
+    x, y = {
+        "train": (Xtrain, Ytrain),
+        "val": (Xdev, Ydev),
+        "test": (Xtest, Ytest)
+    }[split]
+    emb = C[x]
+    embcat = emb.view(emb.shape[0], -1)
+    hpreact = embcat @ W1
+    hpreact = bngain * (hpreact - bnmean) / bnstd + bnbias
+    h = torch.tanh(hpreact)
+    logits = h @ W2 + b2
+    loss = F.cross_entropy(logits, y)
+    print(f"{split} loss: {loss.item():.4f}")
+
+split_loss("train")
+split_loss("val")
+```
+
+```text
+train loss: 2.0696
+val loss: 2.1090
+```
+
+Instead of calibrating at the end, we can estimate the mean and std on the running. The following is the code to do this.
+
+```python
+# create two recorder, without learning
+bnmean_running = torch.zeros((1, n_hidden))
+bnstd_running = torch.ones((1, n_hidden))
+
+# model training process
+for i in range(max_steps):
+
+    # minibatch construction
+    ix = torch.randint(0, Xtrain.shape[0], (batch_size,))
+    Xb, Yb = Xtrain[ix], Ytrain[ix]     # batch X, Y
+
+    # forward pass
+    emb = C[Xb]                                   # character embeddings
+    embcat = emb.view(emb.shape[0], -1)           # concatenate the vectors
+    hpreact = embcat @ W1                         # pre-activation
+    bnmean = hpreact.mean(0, keepdim=True)
+    bnstd = hpreact.std(0, keepdim=True)
+    hpreact = bngain * (hpreact - bnmean) / bnstd + bnbias
+
+    # update the running mean and std
+    with torch.no_grad():
+        bnmean_running = 0.9 * bnmean_running + 0.1 * bnmean
+        bnstd_running = 0.9 * bnstd_running + 0.1 * bnstd
+
+
+    # then, hidden layer
+    h = torch.tanh(hpreact)                       # hidden layer
+    logits = h @ W2 + b2                          # output layer
+    loss = F.cross_entropy(logits, Yb)            # loss function
+
+    # track stats
+    if i % 10000 == 0:
+        print(f"{i:7d}/{max_steps:7d}: loss={loss.item():.4f}")
+    lossi.append(loss.item())
+```
+
+Finally, we evaluate our model on the validation set, directly.
+
+```python
+@torch.no_grad()
+def split_loss(split):
+    x, y = {
+        "train": (Xtrain, Ytrain),
+        "val": (Xdev, Ydev),
+        "test": (Xtest, Ytest)
+    }[split]
+    emb = C[x]
+    embcat = emb.view(emb.shape[0], -1)
+    hpreact = embcat @ W1
+    hpreact = bngain * (hpreact - bnmean_running) / bnstd_running + bnbias
+    h = torch.tanh(hpreact)
+    logits = h @ W2 + b2
+    loss = F.cross_entropy(logits, y)
+    print(f"{split} loss: {loss.item():.4f}")
+```
+
+`ResNet` is a famous deep neural net model for image recognition, see [He et al. (2016)](https://doi.org/10.48550/arXiv.1512.03385). In this model, every block has the same structure, like the following.
+
+![ResNet](../pictures/resnet-block.svg)
+
+The picture is from [here](https://d2l.ai/chapter_convolutional-modern/resnet.html).
+
+And the [code](https://github.com/pytorch/vision/blob/main/torchvision/models/resnet.py) in `Torchvision` is like this:
+
+```python
+class Bottleneck(nn.Module):
+
+    # some code ... ...
+
+    def forward(self, x: Tensor) -> Tensor:
+        identity = x
+
+        out = self.conv1(x)
+        out = self.bn1(out)     # batch normalization
+        out = self.relu(out)    # activation
+
+        out = self.conv2(out)
+        out = self.bn2(out)     # batch normalization
+        out = self.relu(out)    # activation
+
+        out = self.conv3(out)
+        out = self.bn3(out)     # batch normalization
+
+        if self.downsample is not None:
+            identity = self.downsample(x)
+
+        out += identity
+        out = self.relu(out)
+
+        return out
+```
+
+By the way, [Kaiming He](https://kaiminghe.github.io/) is a superstar in the deep learning community. He is the first author of the [`ResNet` paper](https://arxiv.org/abs/1512.03385), and also the first author of the [`Kaiming` initialization paper](https://arxiv.org/abs/1502.01852).
+
+PyTorch implements the `BatchNorm1d` layer, see [here](https://pytorch.org/docs/stable/generated/torch.nn.BatchNorm1d.html). 
+
+> ***Definition:***
+>
+> `CLASS torch.nn.BatchNorm1d(num_features: int, eps: float = 1e-05, momentum: float = 0.1, affine: bool = True, track_running_stats: bool = True) -> None`
+>
+> ***parameters:***
+>
+> - `num_features` – `C` from an expected input of size `(N, C, L)`
+> - `eps` – a value added to the denominator for numerical stability. Default: `1e-5`
+> - `momentum` – the value used for the running_mean and running_var computation. Default: `0.1`
+> - `affine` – a boolean value that when set to `True`, this module has learnable affine parameters. Default: `True`
+> - `track_running_stats` – a boolean value that when set to `True`, this module tracks the running mean and variance, and when set to `False`, this module does not track such statistics and always uses batch statistics in both training and eval modes. Default: `True`
+
+$$y = \frac{x - \mu}{\sqrt{\sigma^2 + \epsilon}} \cdot \gamma + \beta$$
+
+The mean and std are calculated per-dimension over the mini-batches and $\gamma$ and 
+$\beta$ are learnable parameter vectors of size `C` (where `C` is the number of features or channels of the input). By default, the elements of $\gamma$ are set to 1 and the elements of $\beta$ are set to 0. At train time in the forward pass, the std is calculated via the biased estimator, equivalent to `torch.var(input, unbiased=False)`. However, the value stored in the moving average of the std is calculated via the unbiased estimator, equivalent to `torch.var(input, unbiased=True)`.
+
+Also by default, during training this layer keeps running estimates of its computed mean and variance, which are then used for normalization during evaluation. The running estimates are kept with a default `momentum` of `0.1`.
+
+If `track_running_stats` is set to `False`, this layer then does not keep running estimates, and batch statistics are instead used during evaluation time as well.
+
+Now, let's train a deeper network. Yay~!
+
+## Train Deeper
+
 
